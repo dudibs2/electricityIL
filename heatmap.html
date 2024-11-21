@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Electricity Consumption Heatmap</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f9f9f9;
+            color: #333;
+        }
+
+        h1 {
+            text-align: center;
+            color: #444;
+        }
+
+        input[type="file"] {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #fff;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+
+        .cost-input {
+            max-width: fit-content;
+            margin: 20px auto;
+            padding: 10px 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #fff;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        /*input[type="number"] {*/
+        /*    display: block;*/
+        /*    margin: 20px auto;*/
+        /*    padding: 10px 15px;*/
+        /*    border: 1px solid #ccc;*/
+        /*    border-radius: 5px;*/
+        /*    background-color: #fff;*/
+        /*    cursor: pointer;*/
+        /*    transition: background-color 0.3s ease;*/
+        /*}*/
+
+        input[type="file"]:hover {
+            background-color: #f0f0f0;
+        }
+
+        #heatmap {
+            display: grid;
+            grid-template-columns: repeat(25, 1fr);
+            gap: 5px;
+            margin: 30px auto;
+            max-width: 95%;
+        }
+
+        .day-label {
+            font-weight: bold;
+            text-align: center;
+            background: #eee;
+            padding: 5px;
+            border-radius: 3px;
+        }
+
+        .cell {
+            height: 40px;
+            text-align: center;
+            line-height: 40px;
+            font-size: 14px;
+            font-weight: bold;
+            color: white;
+            cursor: pointer;
+            transition: transform 0.2s ease, filter 0.2s ease;
+        }
+
+        .cell:hover {
+            filter: brightness(1.2);
+            transform: scale(1.1);
+        }
+
+        .graph-container {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1000;
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.15);
+        }
+
+        .graph-container.sticky {
+            display: block;
+        }
+
+        .close-graph {
+            text-align: right;
+            margin-bottom: 10px;
+        }
+
+        .close-graph button {
+            background-color: #ff4d4d;
+            border: none;
+            color: white;
+            font-size: 12px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .close-graph button:hover {
+            background-color: #cc0000;
+        }
+
+        .discount-container {
+            margin: 20px auto;
+            text-align: center;
+        }
+
+        .discount {
+            display: inline-block;
+            margin: 10px;
+            padding: 15px;
+            background: #f5f5f5;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: transform 0.2s ease, background-color 0.2s ease;
+        }
+
+        .discount:hover {
+            background-color: #eaeaea;
+            transform: scale(1.05);
+        }
+
+        .discount-icon {
+            display: block;
+            margin: 5px auto;
+            width: 30px;
+            height: 30px;
+        }
+    </style>
+</head>
+<body>
+<h1>Electricity Consumption Heatmap</h1>
+<div class="cost-input">
+    <input type="number" id="costInput" value="61.45" onchange="calculateSavings()" name="costInput"/>
+    <label for="costInput">מחיר לקוט״ש</label>
+</div>
+<input type="file" id="fileInput" accept=".csv"/>
+<div id="heatmap"></div>
+
+<div class="discount-container" id="discounter-container">
+    <!--  <div class="discount" onclick="applyDiscount(0.93)">-->
+    <!--    <img src="7percent.png" class="discount-icon" alt="7% Discount" />-->
+    <!--    <strong>7% Discount</strong> (All Hours)-->
+    <!--  </div>-->
+    <!--  <div class="discount" onclick="applyDiscount(0.85, [14, 15, 16, 17, 18, 19, 20])">-->
+    <!--    <img src="15percent.png" class="discount-icon" alt="15% Discount" />-->
+    <!--    <strong>15% Discount</strong> (14:00–20:00)-->
+    <!--  </div>-->
+    <!--  <div class="discount" onclick="applyDiscount(0.8, [], ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'])">-->
+    <!--    <img src="20percent.png" class="discount-icon" alt="20% Discount" />-->
+    <!--    <strong>20% Discount</strong> (Sun–Thu)-->
+    <!--  </div>-->
+</div>
+
+<div id="graphContainer" class="graph-container">
+    <div class="close-graph">
+        <button onclick="closeGraph()">Close</button>
+    </div>
+    <canvas id="hoverGraph"></canvas>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    const priceInput = document.getElementById("costInput")
+    const fileInput = document.getElementById("fileInput");
+    const heatmap = document.getElementById("heatmap");
+    const graphContainer = document.getElementById("graphContainer");
+    const hoverGraph = document.getElementById("hoverGraph").getContext("2d");
+    let chartInstance;
+    let heatmapData = {};
+    let prices = {};
+    let historyConsumption = {};
+    let minValue = Infinity;
+    let maxValue = -Infinity;
+
+    const discountPlans = [
+        {
+            name: "פזגז - 7% הנחה קבוע",
+            rate: 0.93, // 7% discount
+            hours: [], // All hours
+            days: [], // All days
+            icon: "https://www.arciv.co.il/wp-content/uploads/paz-gas.png",
+        },
+        {
+            name: "בזק - 7% הנחה קבוע",
+            rate: 0.93, // 7% discount
+            hours: [], // All hours
+            days: [], // All days
+            icon: "https://www.smartcut.co.il/wp-content/uploads/2024/06/bezeq-electricity-150x150.png",
+        },
+        {
+            name: "בזק - 15% הנחה 7:00-17:00 ראשון-חמישי",
+            rate: 0.85, // 15% discount
+            hours: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+            days: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"], // All days
+            icon: "https://www.smartcut.co.il/wp-content/uploads/2024/06/bezeq-electricity-150x150.png",
+        },
+        {
+            name: "הוט - 15% הנחה 7:00-17:00 ראשון-חמישי",
+            rate: 0.85, // 15% discount
+            hours: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+            days: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"], // All days
+            icon: "https://res.cloudinary.com/sherutnet/image/upload/f_auto,q_auto/mini_logos/hot_energy.png",
+        },
+        {
+            name: "סלקום - 15% הנחה 7:00-17:00 ראשון-חמישי",
+            rate: 0.85, // 15% discount
+            hours: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+            days: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"],
+            icon: "https://www.smartcut.co.il/wp-content/uploads/2023/12/%D7%A1%D7%9C%D7%A7%D7%95%D7%9D-%D7%90%D7%A0%D7%A8%D7%92%D7%99-%D7%97%D7%A9%D7%9E%D7%9C-150x150.png",
+        },
+        {
+            name: "סלקום - 20% הנחה 22:00-7:00 ראשון-חמישי",
+            rate: 0.80, // 20% discount
+            hours: [22, 23, 0, 1, 2, 3, 4, 5, 6, 7],
+            days: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"],
+            icon: "https://www.smartcut.co.il/wp-content/uploads/2023/12/%D7%A1%D7%9C%D7%A7%D7%95%D7%9D-%D7%90%D7%A0%D7%A8%D7%92%D7%99-%D7%97%D7%A9%D7%9E%D7%9C-150x150.png",
+        },
+        {
+            name: "סלקום - 20% הנחה 14:00-20:00",
+            rate: 0.80, // 20% discount
+            hours: [14, 15, 16, 17, 18, 19, 20],
+            days: [], // All days
+            icon: "https://www.smartcut.co.il/wp-content/uploads/2023/12/%D7%A1%D7%9C%D7%A7%D7%95%D7%9D-%D7%90%D7%A0%D7%A8%D7%92%D7%99-%D7%97%D7%A9%D7%9E%D7%9C-150x150.png",
+        },
+    ];
+    calculateSavings()
+
+    function calculateSavings() {
+        const savingsContainer = document.getElementById("discounter-container");
+        savingsContainer.innerHTML = ""; // Clear previous results
+
+        // Calculate total savings for each discount plan
+        const savingsResults = discountPlans.map((plan) => {
+            let totalSavings = 0;
+
+            Object.keys(prices).forEach((key) => {
+                const [day, hour] = key.split("_");
+                const hourInt = parseInt(hour);
+
+                const matchesDay = !plan.days.length || plan.days.includes(day);
+                const matchesHour = !plan.hours.length || plan.hours.includes(hourInt);
+
+                if (matchesDay && matchesHour) {
+                    const originalCost = prices[key] * priceInput.value; // Assuming IEC price is 0.6 NIS/kWh
+                    const discountedCost = originalCost * plan.rate;
+                    totalSavings += originalCost - discountedCost;
+                }
+            });
+
+            return {
+                name: plan.name,
+                icon: plan.icon,
+                plan: plan,
+                savings: totalSavings,
+            };
+        });
+
+        // Sort discounts by total savings (descending order)
+        savingsResults.sort((a, b) => a.savings - b.savings);
+
+        // Get the range of savings for gradient calculation
+        const maxSavings = Math.max(...savingsResults.map((d) => d.savings));
+        const minSavings = Math.min(...savingsResults.map((d) => d.savings));
+
+        // Display savings for each plan, sorted and color-coded
+        savingsResults.forEach((result) => {
+            const intensity = (result.savings - minSavings) / (maxSavings - minSavings || 1); // Normalize savings
+            const red = Math.round((1 - intensity) * 255);
+            const green = Math.round(intensity * 255);
+            const borderColor = `rgb(${red}, ${green}, 0)`;
+
+            savingsContainer.innerHTML += `
+      <div class="discount" style="border: 3px solid ${borderColor}" onclick="applyDiscount(${JSON.stringify(result.plan).replace(/'/g, "&#39;").replace(/"/g, "&quot;")})">
+        <img src="${result.icon}" class="discount-icon" alt="${result.name}" />
+        <strong>${result.name}</strong><br />
+        <span>Saves: ₪${result.savings.toFixed(2)}</span>
+      </div>
+    `;
+        });
+    }
+
+
+    // Calculate and display savings for each discount
+    function calculateSavings2() {
+        const savingsContainer = document.getElementById("discounter-container");
+        savingsContainer.innerHTML = ""; // Clear previous results
+
+        discountPlans.forEach((plan) => {
+            let totalSavings = 0;
+
+            Object.keys(prices).forEach((key) => {
+                const [day, hour] = key.split("_");
+                const hourInt = parseInt(hour);
+
+                const matchesDay = !plan.days.length || plan.days.includes(day);
+                const matchesHour = !plan.hours.length || plan.hours.includes(hourInt);
+
+                if (matchesDay && matchesHour) {
+                    const originalCost = prices[key] * priceInput.value;
+                    const discountedCost = originalCost * plan.rate;
+                    totalSavings += originalCost - discountedCost;
+                }
+            });
+
+            // Append the savings for this plan to the UI
+            savingsContainer.innerHTML += `
+      <div class="discount">
+        <img src="${plan.icon}" class="discount-icon" alt="${plan.name}" />
+        <strong>${plan.name}</strong><br />
+        <span>Saves: ₪${totalSavings.toFixed(2)}</span>
+      </div>
+    `;
+        });
+    }
+
+
+    fileInput.addEventListener("change", (event) => {
+        const file = event.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => processCSV(e.target.result);
+            reader.readAsText(file);
+        }
+    });
+
+    function applyDiscount(plan) {
+        const hours = plan.hours
+        const days = plan.days
+
+        // Reset borders on all cells
+        document.querySelectorAll(".cell").forEach((cell) => {
+            cell.style.border = "1px solid transparent"; // Reset border
+        });
+
+        // Apply discount and highlight relevant cells
+        Object.keys(prices).forEach((key) => {
+            const [day, hour] = key.split("_");
+            const hourInt = parseInt(hour);
+
+            // Check if the day and hour match the discount criteria
+            const matchesDay = !days.length || days.includes(day);
+            const matchesHour = !hours.length || hours.includes(hourInt);
+
+            if (matchesDay && matchesHour) {
+                // Highlight the relevant cell
+                const matchingCell = document.querySelector(
+                    `.cell[onclick="showGraph('${day}', ${hour})"]`
+                );
+                if (matchingCell) {
+                    matchingCell.style.border = "4px solid #000000"; // Add golden border
+                }
+            }
+        });
+    }
+
+
+    function processCSV(data) {
+        const rows = data.split("\n").map((row) =>
+            row.split(",").map((col) => col.replace(/^"|"$/g, "").trim())
+        );
+
+        heatmapData = {};
+        prices = {};
+        historyConsumption = {};
+        const counts = {}; // Track the number of rows for each day-hour combination
+
+        minValue = Infinity;
+        maxValue = -Infinity;
+
+        rows.forEach((row, index) => {
+            if (row.length === 3) {
+                const [date, time, consumption] = row;
+                const [day, month, year] = date.split("/").map(Number);
+                const datetime = new Date(year, month - 1, day, ...time.split(":").map(Number));
+
+                if (isNaN(datetime)) {
+                    console.warn(`Invalid row at index ${index}:`, {date, time, consumption});
+                    return;
+                }
+
+                const dayName = datetime.toLocaleDateString("en-US", {weekday: "long"});
+                const hour = datetime.getHours();
+                const value = parseFloat(consumption) || 0;
+
+                const key = `${dayName}_${hour}`;
+                prices[key] = (prices[key] || 0) + value;
+                if (!historyConsumption[key]) {
+                    historyConsumption[key] = {
+                        "values": [],
+                        "dates": []
+                    }
+                }
+                historyConsumption[key]["values"].push(value)
+                historyConsumption[key]["dates"].push(date)
+                counts[key] = (counts[key] || 0) + 1;
+            }
+        });
+
+        // Calculate the average for each day-hour combination
+        Object.keys(prices).forEach((key) => {
+            prices[key] /= counts[key];
+            minValue = Math.min(minValue, prices[key]);
+            maxValue = Math.max(maxValue, prices[key]);
+        });
+
+        generateHeatmap();
+    }
+
+    function generateHeatmap() {
+        calculateSavings()
+        heatmap.innerHTML = '<div></div>';
+        for (let hour = 0; hour < 24; hour++) {
+            heatmap.innerHTML += `<div class="day-label">${hour}:00</div>`;
+        }
+
+        const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        days.forEach((day) => {
+            heatmap.innerHTML += `<div class="day-label">${day}</div>`;
+            for (let hour = 0; hour < 24; hour++) {
+                const value = prices[`${day}_${hour}`] || 0;
+
+                // Normalize value to [0, 1]
+                let intensity = 0;
+                if (maxValue > minValue) {
+                    intensity = (value - minValue) / (maxValue - minValue);
+                }
+
+                // Ensure intensity is within [0, 1]
+                intensity = Math.min(Math.max(intensity, 0), 1);
+
+                // Calculate color gradient (green to red)
+                const red = Math.round(intensity * 255);
+                const green = Math.round((1 - intensity) * 255);
+                const backgroundColor = `rgb(${red}, ${green}, 0)`;
+
+                heatmap.innerHTML += `
+        <div
+          class="cell"
+          style="background-color: ${backgroundColor}"
+          onclick="showGraph('${day}', ${hour})"
+          title="${value.toFixed(2)} kWh">
+          ${value.toFixed(1)}
+        </div>`;
+            }
+        });
+    }
+
+    function showGraph(day, hour) {
+        const data = historyConsumption[`${day}_${hour}`];
+
+        graphContainer.classList.add("sticky");
+        if (chartInstance) chartInstance.destroy();
+
+        chartInstance = new Chart(hoverGraph, {
+            type: "line",
+            data: {
+                labels: data["dates"],
+                datasets: [
+                    {
+                        label: `Consumption on ${day} at ${hour}`,
+                        data: data["values"],
+                        borderColor: "rgba(75, 192, 192, 1)",
+                        backgroundColor: "rgba(75, 192, 192, 0.2)",
+                        tension: 0.4, // Smooth curve
+                        borderWidth: 2,
+                    },
+                ],
+            },
+        });
+    }
+
+    function closeGraph() {
+        graphContainer.classList.remove("sticky");
+    }
+</script>
+</body>
+</html>
